@@ -9,8 +9,10 @@
 #include <unistd.h>
 #include <pthread.h>
 
+#include "cmd_utils.h"
 #include "socket_utils.h"
 #include "library_utils.h"
+#include "memory_utils.h"
 
 static FILE *log_file = NULL;
 #define LOG(...){ \
@@ -28,35 +30,14 @@ struct session_ctx{
 	int fd;
 };
 
-static const char* string_until_not(const char *orig, int len, char n){
-	for(int i = 0;i < len; i++){
-		if(orig[i] != n){
-			return &orig[i];
-		}
-	}
-	return &orig[len - 1];
-}
-
-static char* trim_string_until(char *orig, int len, char until){
-	char *begin = (char *)string_until_not(orig, len, ' ');
-	uint64_t offset = (uint64_t)begin - (uint64_t)len;
-	for(int i = 0;i < len - offset; i++){
-		if(begin[i] == until){
-			begin[i] = 0;
-			break;
-		}
-	}
-	return begin;
-}
-
 static void *session(void *arg){
 	struct session_ctx *ctx = (struct session_ctx*)arg;
 	while(true){
 		static const char initial_message[] = "\n\ncaw caw! tell me what to do!\n"
 			"load_library <library path>\n"
 			"free_library <library name>\n"
-			"read_memory <begin> <len>\n"
-			"(WIP)search_memory\n"
+			"memory_utils\n"
+			"exit\n"
 			"\n\n>"
 		;
 		if(send_till_done(ctx->fd, initial_message, sizeof(initial_message), 0) != sizeof(initial_message)){
@@ -108,6 +89,28 @@ static void *session(void *arg){
 				response_len = sprintf(response_buf, "library freed once :D\n");
 			}
 		}
+
+		static const char cmd_memory_utils[] = "memory_utils";
+		if(strncmp(cmd_buf, cmd_memory_utils, sizeof(cmd_memory_utils) - 1) == 0){
+			int ret = memory_utils_menu(ctx->fd);
+			if(ret != 0){
+				const char* str_addr = inet_ntoa(ctx->incoming_addr.sin_addr);
+				int port = ntohs(ctx->incoming_addr.sin_port);
+				LOG("%s: connection from %s:%d closed during memory utils\n", __func__, str_addr, port);
+				break;
+			}
+		}
+
+		static const char cmd_exit[] = "exit";
+		if(strncmp(cmd_buf, cmd_exit, sizeof(cmd_exit) - 1) == 0){
+			static const char exit_message[] = "bye bye!\n";
+			send_till_done(ctx->fd, exit_message, sizeof(exit_message), 0);
+			const char* str_addr = inet_ntoa(ctx->incoming_addr.sin_addr);
+			int port = ntohs(ctx->incoming_addr.sin_port);
+			LOG("%s: connection from %s:%d closed from user command\n", __func__, str_addr, port);
+			break;
+		}
+
 		if(response_len != 0){
 			send_till_done(ctx->fd, response_buf, response_len, 0);
 		}
