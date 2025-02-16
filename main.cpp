@@ -9,6 +9,8 @@
 #include <unistd.h>
 #include <pthread.h>
 
+#include <vector>
+
 static FILE *log_file = NULL;
 #define LOG(...){ \
 	if(log_file == NULL){ \
@@ -20,10 +22,35 @@ static FILE *log_file = NULL;
 	} \
 }
 
+std::vector<DWORD> goober_tids;
+pthread_mutex_t goober_tids_mutex;
+
+static void push_goober_tid(DWORD tid){
+	pthread_mutex_lock(&goober_tids_mutex);
+	goober_tids.push_back(tid);
+	pthread_mutex_unlock(&goober_tids_mutex);
+}
+
+static void remove_goober_tid(DWORD tid){
+	pthread_mutex_lock(&goober_tids_mutex);
+	auto itr = goober_tids.begin();
+	while(itr != goober_tids.end()){
+		if(*itr == tid){
+			break;
+		}
+		itr++;
+	}
+	if(itr != goober_tids.end()){
+		goober_tids.erase(itr);
+	}
+	pthread_mutex_unlock(&goober_tids_mutex);
+}
+
 #include "cmd_utils.h"
 #include "socket_utils.h"
 #include "library_utils.h"
 #include "memory_utils.h"
+#include "process_utils.h"
 
 struct session_ctx{
 	sockaddr_in incoming_addr;
@@ -31,12 +58,16 @@ struct session_ctx{
 };
 
 static void *session(void *arg){
+	push_goober_tid(GetThreadId(GetCurrentThread()));
+
 	struct session_ctx *ctx = (struct session_ctx*)arg;
 	while(true){
 		static const char initial_message[] = "\n\ncaw caw! tell me what to do!\n"
 			"load_library <library path>\n"
 			"free_library <library name>\n"
 			"memory_utils\n"
+			"pause_threads\n"
+			"resume_threads\n"
 			"exit\n"
 			"\n\n>"
 		;
@@ -101,6 +132,29 @@ static void *session(void *arg){
 			}
 		}
 
+		static HANDLE thread_snapshot = INVALID_HANDLE_VALUE;
+
+		static const char cmd_pause_threads[] = "pause_threads";
+		if(strncmp(cmd_buf, cmd_pause_threads, sizeof(cmd_pause_threads) - 1) == 0){
+			thread_snapshot = pause_threads();
+			if(thread_snapshot != INVALID_HANDLE_VALUE){
+				response_len = sprintf(response_buf, "paused threads :D\n");
+			}else{
+				response_len = sprintf(response_buf, "cannot pause threads :(\n");
+			}
+		}
+
+		static const char cmd_resume_threads[] = "resume_threads";
+		if(strncmp(cmd_buf, cmd_resume_threads, sizeof(cmd_resume_threads) - 1) == 0){
+			if(thread_snapshot == INVALID_HANDLE_VALUE){
+				response_len = sprintf(response_buf, "pause threads first before resuming :D\n");
+			}else{
+				resume_threads(thread_snapshot);
+				response_len = sprintf(response_buf, "resume threads :D\n");
+				thread_snapshot = INVALID_HANDLE_VALUE;
+			}
+		}
+
 		static const char cmd_exit[] = "exit";
 		if(strncmp(cmd_buf, cmd_exit, sizeof(cmd_exit) - 1) == 0){
 			static const char exit_message[] = "bye bye!\n";
@@ -112,16 +166,27 @@ static void *session(void *arg){
 		}
 
 		if(response_len != 0){
-			send_till_done(ctx->fd, response_buf, response_len, 0);
+			if(send_till_done(ctx->fd, response_buf, response_len, 0) <= 0){
+				const char* str_addr = inet_ntoa(ctx->incoming_addr.sin_addr);
+				int port = ntohs(ctx->incoming_addr.sin_port);
+				LOG("%s: connection from %s:%d closed after an operation\n", __func__, str_addr, port);
+				break;
+			}
 		}
 	}
 
 	closesocket(ctx->fd);
 	free(ctx);
+	remove_goober_tid(GetThreadId(GetCurrentThread()));
+
 	return NULL;
 }
 
 static void *listen(void *arg){
+	pthread_mutex_init(&goober_tids_mutex, NULL);
+
+	push_goober_tid(GetThreadId(GetCurrentThread()));
+
 	sleep(1);
 
 	WSADATA wsa_data;
