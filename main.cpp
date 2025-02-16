@@ -9,11 +9,6 @@
 #include <unistd.h>
 #include <pthread.h>
 
-#include "cmd_utils.h"
-#include "socket_utils.h"
-#include "library_utils.h"
-#include "memory_utils.h"
-
 static FILE *log_file = NULL;
 #define LOG(...){ \
 	if(log_file == NULL){ \
@@ -24,6 +19,11 @@ static FILE *log_file = NULL;
 		fflush(log_file); \
 	} \
 }
+
+#include "cmd_utils.h"
+#include "socket_utils.h"
+#include "library_utils.h"
+#include "memory_utils.h"
 
 struct session_ctx{
 	sockaddr_in incoming_addr;

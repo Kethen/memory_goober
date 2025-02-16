@@ -22,4 +22,21 @@ static char* trim_string_until(char *orig, int len, char until){
 	return begin;
 }
 
+static const char* get_one_opt(const char *orig, int len, char *out_buf, int out_len, char delim){
+	for(int i = 0; i < len; i++){
+		if(orig[i] != delim){
+			break;
+		}
+		orig = (const char *)((size_t)orig + 1);
+		len = len - 1;
+	}
+	for(int i = 0; i < len && i < out_len; i++){
+		if(orig[i] == delim ){
+			return (const char *)((size_t)orig + i);
+		}
+		out_buf[i] = orig[i];
+	}
+	return (const char *)((size_t)orig + (len > out_len? out_len : len));
+}
+
 #endif
